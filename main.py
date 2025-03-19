@@ -168,13 +168,13 @@ def handle_file_upload(file: UploadFile) -> str:
         logger.error(f"Error handling file upload: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
 
-@app.post("/api/upload")
+@app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """Upload a file and return its path."""
     file_path = handle_file_upload(file)
     return {"file_path": file_path}
 
-@app.post("/api/chat")
+@app.post("/chat")
 async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     """Process a chat message and return the response."""
     try:
@@ -293,13 +293,13 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
             thread_id=thread_id or str(uuid.uuid4())
         )
 
-@app.get("/api/models")
+@app.get("/models")
 async def get_available_models():
     """Return a list of available models based on configured API keys."""
     available_models = list(MODEL_CLIENTS.keys())
     return {"models": available_models}
 
-@app.post("/api/react-search")
+@app.post("/react-search")
 async def react_agent_search(request: ReactAgentRequest):
     """Process a chat message using the ReAct agent with search capabilities."""
     try:
@@ -407,7 +407,7 @@ async def react_agent_search(request: ReactAgentRequest):
             thread_id=thread_id or str(uuid.uuid4())
         )
 
-@app.post("/api/react-search-streaming")
+@app.post("/react-search-streaming")
 async def react_agent_search_streaming(request: ReactAgentRequest):
     """Process a chat message using the ReAct agent with search capabilities and stream status updates."""
     
