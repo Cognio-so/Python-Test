@@ -1,0 +1,46 @@
+# Core Dependencies
+fastapi>=0.109.0
+uvicorn>=0.27.0
+python-dotenv>=1.0.1
+starlette>=0.36.0
+pydantic>=2.0.0
+
+# LangChain Ecosystem
+langchain>=0.2.14
+langchain-openai>=0.1.22
+langchain-anthropic>=0.1.23
+langchain-fireworks>=0.1.7
+langchain-community>=0.2.17
+langchain-core>=0.1.27
+langgraph>=0.2.6
+langchain-groq>=0.0.1
+
+# LLM APIs
+google-generativeai>=0.3.0
+openai>=1.12.0
+anthropic>=0.18.1
+fireworks-ai>=0.9.0
+groq>=0.4.2
+tavily-python>=0.4.0
+replicate>=0.22.0
+
+# Utilities
+tenacity>=8.2.0
+requests>=2.31.0
+streamlit>=1.24.0
+
+# New dependencies
+langchain[sqlite]
+langchain-groq
+
+# For file uploads with FastAPI
+python-multipart>=0.0.6
+
+# For streaming responses
+sse-starlette>=1.6.1
+
+# For async operations
+aiofiles>=23.1.0
+
+# For better error handling
+backoff>=2.2.1
