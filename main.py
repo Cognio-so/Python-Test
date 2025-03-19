@@ -46,10 +46,15 @@ app = FastAPI(title="Vaani.pro API")
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For production, replace with specific origins
+    allow_origins=[
+        "https://vanni-test-frontend.vercel.app",
+        "https://vanni-test.vercel.app",
+        "http://localhost:5173", 
+        "http://localhost:5174",
+    ],  # Specific origins instead of ["*"] when using credentials
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Cookie", "Accept"],
 )
 
 # Configuration
@@ -168,13 +173,13 @@ def handle_file_upload(file: UploadFile) -> str:
         logger.error(f"Error handling file upload: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
 
-@app.post("/upload")
+@app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     """Upload a file and return its path."""
     file_path = handle_file_upload(file)
     return {"file_path": file_path}
 
-@app.post("/chat")
+@app.post("/api/chat")
 async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     """Process a chat message and return the response."""
     try:
@@ -293,13 +298,13 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
             thread_id=thread_id or str(uuid.uuid4())
         )
 
-@app.get("/models")
+@app.get("/api/models")
 async def get_available_models():
     """Return a list of available models based on configured API keys."""
     available_models = list(MODEL_CLIENTS.keys())
     return {"models": available_models}
 
-@app.post("/react-search")
+@app.post("/api/react-search")
 async def react_agent_search(request: ReactAgentRequest):
     """Process a chat message using the ReAct agent with search capabilities."""
     try:
@@ -407,7 +412,7 @@ async def react_agent_search(request: ReactAgentRequest):
             thread_id=thread_id or str(uuid.uuid4())
         )
 
-@app.post("/react-search-streaming")
+@app.post("/api/react-search-streaming")
 async def react_agent_search_streaming(request: ReactAgentRequest):
     """Process a chat message using the ReAct agent with search capabilities and stream status updates."""
     
@@ -538,6 +543,12 @@ async def react_agent_search_streaming(request: ReactAgentRequest):
         event_generator(),
         media_type="text/event-stream"
     )
+
+# Add health check endpoint
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint to verify API is running."""
+    return {"status": "ok", "timestamp": time.time()}
 
 if __name__ == "__main__":
     import uvicorn
