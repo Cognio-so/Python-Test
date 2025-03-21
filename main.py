@@ -18,7 +18,7 @@ load_dotenv()
 
 # Add parent directory to path to import agent module
 sys.path.append(str(Path(__file__).parent.parent))
-from agt.agent import graph as agt_graph, VaaniState
+from src.agt.agent import graph as agt_graph, VaaniState
 from langchain_core.messages import HumanMessage, AIMessage
 
 # Import model clients
@@ -51,7 +51,11 @@ app.add_middleware(
         "https://vanni-test.vercel.app",
         "http://localhost:5173", 
         "http://localhost:5174",
-    ],  # Specific origins instead of ["*"] when using credentials
+        # Add your production domain here after deployment
+        "https://vanni-test-frontend.vercel.app",
+        # Allow Vercel preview deployments
+        "https://*.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "Cookie", "Accept"],
@@ -87,6 +91,7 @@ class ChatRequest(BaseModel):
     file_url: Optional[str] = None
     use_agent: bool = False
     deep_research: bool = False
+    stream: bool = False
 
 class ChatResponse(BaseModel):
     message: Message
@@ -186,20 +191,46 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
         # Create or get thread ID
         thread_id = request.thread_id or str(uuid.uuid4())
         
+        # Use request.stream directly instead of model_dump().get()
+        stream = request.stream
+        
         # Convert frontend messages to LangChain format
         langchain_messages = []
         for msg in request.messages:
             if msg.role == "user":
-                langchain_messages.append(HumanMessage(content=msg.content))
+                # Fix: Ensure content is not empty
+                content = msg.content.strip() if msg.content else "Hello"
+                langchain_messages.append(HumanMessage(content=content))
             elif msg.role == "assistant":
-                langchain_messages.append(AIMessage(content=msg.content))
+                # Fix: Ensure content is not empty
+                content = msg.content.strip() if msg.content else "I'm an AI assistant."
+                langchain_messages.append(AIMessage(content=content))
+        
+        # Ensure we have at least one message
+        if not langchain_messages:
+            langchain_messages = [HumanMessage(content="Hello")]
         
         # Log the incoming request with emphasis on the selected model
-        logger.info(f"Received chat request: model={request.model}, thread_id={thread_id}, use_agent={request.use_agent}")
+        logger.info(f"Received chat request: model={request.model}, thread_id={thread_id}, use_agent={request.use_agent}, stream={stream}")
         
         # Get the model name from the current request (allowing model switching)
         backend_model = request.model
         logger.info(f"Using model for this message: {backend_model}")
+        
+        # If streaming is requested, handle it differently
+        if stream:
+            # Return a streaming response
+            return StreamingResponse(
+                stream_chat_response(
+                    messages=langchain_messages,
+                    model=backend_model,
+                    thread_id=thread_id,
+                    use_agent=request.use_agent,
+                    deep_research=request.deep_research,
+                    file_url=request.file_url
+                ),
+                media_type="text/event-stream"
+            )
         
         # Only use agent when requested via the bulb icon (use_agent=True)
         if request.use_agent:
@@ -297,6 +328,162 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
             message=Message(role="assistant", content=f"I encountered an error: {str(e)}"),
             thread_id=thread_id or str(uuid.uuid4())
         )
+
+# Add the streaming function for the chat endpoint
+async def stream_chat_response(messages, model, thread_id, use_agent, deep_research, file_url):
+    """Generate a streaming response for chat."""
+    try:
+        # Initial status update with debug info
+        logger.info(f"Starting stream_chat_response: model={model}, thread_id={thread_id}, use_agent={use_agent}")
+        yield json.dumps({"type": "status", "status": "Thinking..."}) + "\n"
+        
+        # Check if we have a model client for the requested model
+        if model not in MODEL_CLIENTS:
+            logger.warning(f"Model {model} not found in available models: {list(MODEL_CLIENTS.keys())}")
+            if not MODEL_CLIENTS:
+                yield json.dumps({
+                    "type": "result",
+                    "message": {"role": "assistant", "content": "No API keys are configured. Please add API keys to your .env file."},
+                    "thread_id": thread_id
+                }) + "\n"
+                return
+            # Log available models for debugging
+            logger.warning(f"Available models: {list(MODEL_CLIENTS.keys())}")
+            logger.warning(f"Model {model} not found, using first available model")
+            # If the model doesn't exist but we have some clients, use the first available
+            model = next(iter(MODEL_CLIENTS.keys()))
+            logger.warning(f"Falling back to: {model}")
+        
+        # Get the appropriate model client
+        model_client = MODEL_CLIENTS[model]()
+        logger.info(f"Got model client for {model}")
+        
+        # Add safety check for empty messages with better logging
+        if not messages:
+            logger.warning("No messages provided to stream_chat_response")
+            yield json.dumps({
+                "type": "result",
+                "message": {"role": "assistant", "content": "I received an empty message. How can I help you?"},
+                "thread_id": thread_id
+            }) + "\n"
+            return
+            
+        # Log messages for debugging
+        logger.info(f"Processing messages: {len(messages)} messages")
+        for i, m in enumerate(messages):
+            logger.info(f"Message {i}: type={type(m)}, role={getattr(m, 'type', 'unknown')}, content_length={len(m.content) if hasattr(m, 'content') else 0}")
+        
+        if use_agent:
+            # Generate a few status updates for the agent
+            yield json.dumps({"type": "status", "status": "Planning response..."}) + "\n"
+            await asyncio.sleep(0.5)
+            yield json.dumps({"type": "status", "status": "Processing information..."}) + "\n"
+            await asyncio.sleep(0.5)
+            
+            # Prepare input state for the agent
+            input_state = VaaniState(
+                messages=messages,
+                file_url=file_url,
+                indexed=False,
+                deep_research_requested=deep_research,
+                agent_name="web_search_agent" if deep_research else None,
+                model_name=model,
+                reflect_iterations=0,
+                reflection_data=None
+            )
+            
+            # Configure agent
+            config = {"configurable": {"thread_id": thread_id}}
+            
+            # Process with agent
+            try:
+                # Get the full response first
+                result = await asyncio.to_thread(agt_graph.invoke, input_state, config)
+                
+                # Extract response content
+                if "messages" in result and result["messages"] and len(result["messages"]) > 0:
+                    ai_message = result["messages"][-1]
+                    if hasattr(ai_message, "content"):
+                        response_content = ai_message.content
+                    elif isinstance(ai_message, dict) and "content" in ai_message:
+                        response_content = ai_message["content"]
+                    else:
+                        response_content = "I couldn't process your request properly."
+                else:
+                    response_content = "I couldn't process your request with the AI agent. Please try again."
+                
+                # Stream it word by word
+                words = response_content.split(' ')
+                current_response = ""
+                
+                for i, word in enumerate(words):
+                    current_response += word + ' '
+                    if i % 3 == 0 or i == len(words) - 1:  # Send every 3 words
+                        yield json.dumps({
+                            "type": "token",
+                            "token": current_response,
+                            "thread_id": thread_id
+                        }) + "\n"
+                        await asyncio.sleep(0.05)  # Small delay between updates
+                
+                # Send final result
+                yield json.dumps({
+                    "type": "result",
+                    "message": {"role": "assistant", "content": response_content},
+                    "thread_id": thread_id
+                }) + "\n"
+                
+            except Exception as invoke_error:
+                logger.error(f"Error in agent processing: {invoke_error}", exc_info=True)
+                yield json.dumps({
+                    "type": "result",
+                    "message": {"role": "assistant", "content": f"I encountered an error with the AI agent: {str(invoke_error)}"},
+                    "thread_id": thread_id
+                }) + "\n"
+        
+        else:
+            # Direct model conversation without agent
+            try:
+                # For simplicity, get the full response first
+                ai_response = await asyncio.to_thread(model_client.invoke, messages)
+                response_content = ai_response.content
+                
+                # Now stream it word by word
+                words = response_content.split(' ')
+                current_response = ""
+                
+                for i, word in enumerate(words):
+                    current_response += word + ' '
+                    if i % 3 == 0 or i == len(words) - 1:  # Send every 3 words
+                        yield json.dumps({
+                            "type": "token",
+                            "token": current_response,
+                            "thread_id": thread_id
+                        }) + "\n"
+                        await asyncio.sleep(0.05)  # Small delay between updates
+                
+                # Send final result
+                yield json.dumps({
+                    "type": "result",
+                    "message": {"role": "assistant", "content": response_content},
+                    "thread_id": thread_id
+                }) + "\n"
+                
+            except Exception as model_error:
+                logger.error(f"Error in model processing: {model_error}", exc_info=True)
+                yield json.dumps({
+                    "type": "result",
+                    "message": {"role": "assistant", "content": f"I encountered an error with the {model} model: {str(model_error)}"},
+                    "thread_id": thread_id
+                }) + "\n"
+    
+    except Exception as e:
+        logger.error(f"Error in streaming chat response: {e}", exc_info=True)
+        yield json.dumps({
+            "type": "result",
+            "message": {"role": "assistant", "content": f"I encountered an error: {str(e)}"},
+            "thread_id": thread_id
+        }) + "\n"
 
 @app.get("/api/models")
 async def get_available_models():
@@ -544,11 +731,16 @@ async def react_agent_search_streaming(request: ReactAgentRequest):
         media_type="text/event-stream"
     )
 
-# Add health check endpoint
+# Update health check endpoint
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint to verify API is running."""
-    return {"status": "ok", "timestamp": time.time()}
+    return {
+        "status": "ok", 
+        "timestamp": time.time(),
+        "deployment": "Vaani API successfully deployed on Vercel!",
+        "environment": "Vercel" if os.getenv("VERCEL") else "Development"
+    }
 
 if __name__ == "__main__":
     import uvicorn
