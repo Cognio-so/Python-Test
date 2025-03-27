@@ -62,6 +62,29 @@ async def call_model(
             ]
         }
 
+    # If this is a final response without tool calls, format it to include sources
+    if not response.tool_calls:
+        # Get source URLs from previous messages
+        source_urls = format_search_results(state.messages)
+        
+        if source_urls and not "Sources:" in response.content:
+            # Add sources to the response
+            updated_content = response.content
+            
+            # Add a Sources section if there are URLs to include
+            if source_urls:
+                updated_content += "\n\n**Sources:**\n"
+                for title, url in source_urls:
+                    updated_content += f"- [{title}]({url})\n"
+            
+            # Create updated message
+            response = AIMessage(
+                id=response.id,
+                content=updated_content,
+                tool_calls=response.tool_calls,
+                additional_kwargs=response.additional_kwargs
+            )
+
     # Return the model's response as a list to be added to existing messages
     return {"messages": [response]}
 
@@ -121,3 +144,19 @@ graph = builder.compile(
     interrupt_after=[],  # Add node names here to update state after they're called
 )
 graph.name = "ReAct Agent"  # This customizes the name in LangSmith
+
+def format_search_results(messages):
+    """Format search results to include source citations."""
+    # Find tool messages containing search results
+    source_urls = []
+    
+    for msg in messages:
+        if hasattr(msg, "tool_calls"):
+            for tool_call in msg.tool_calls:
+                if tool_call.get("name") == "search" and isinstance(tool_call.get("output"), list):
+                    # Extract URLs from search results
+                    for result in tool_call.get("output"):
+                        if result.get("url") and result.get("title"):
+                            source_urls.append((result.get("title"), result.get("url")))
+    
+    return source_urls

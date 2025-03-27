@@ -954,7 +954,7 @@ def image_generator_agent_node(
             if output and isinstance(output, list) and len(output) > 0:
                 image_url = output[0]
                 logger.info(f"Image generated successfully: {image_url}")
-                response = f"I've generated an image based on your request. Here it is: {image_url}"
+                response = f" {image_url}"
             else:
                 logger.error("No image URL in the output")
                 response = "I couldn't generate an image. Please try a different description."

@@ -11,6 +11,7 @@ import asyncio
 import logging
 import json
 from pathlib import Path
+import random
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -48,13 +49,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://vanni-test-frontend.vercel.app",
-        "https://vanni-test.vercel.app",
         "http://localhost:5173", 
         "http://localhost:5174",
-        # Add your production domain here after deployment
-        "https://vanni-test-frontend.vercel.app",
-        # Allow Vercel preview deployments
-        "https://*.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -108,21 +104,41 @@ def get_model_clients():
     
     # OpenAI models - requires OPENAI_API_KEY
     if os.getenv("OPENAI_API_KEY"):
-        clients["gpt-4o-mini"] = lambda: ChatOpenAI(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"))
-        clients["gpt-4o"] = lambda: ChatOpenAI(model="gpt-4o", api_key=os.getenv("OPENAI_API_KEY"))
+        clients["gpt-4o-mini"] = lambda: ChatOpenAI(
+            model="gpt-4o-mini", 
+            api_key=os.getenv("OPENAI_API_KEY"),
+            streaming=True  # Enable streaming by default
+        )
+        clients["gpt-4o"] = lambda: ChatOpenAI(
+            model="gpt-4o", 
+            api_key=os.getenv("OPENAI_API_KEY"),
+            streaming=True
+        )
     
     # Google models - requires GOOGLE_API_KEY
     if os.getenv("GOOGLE_API_KEY"):
         clients["gemini-1.5-flash"] = lambda: ChatGoogleGenerativeAI(
             model="gemini-1.5-flash", 
-            google_api_key=os.getenv("GOOGLE_API_KEY")
+            google_api_key=os.getenv("GOOGLE_API_KEY"),
+            streaming=True
+        )
+        clients["gemini-1.5-pro"] = lambda: ChatGoogleGenerativeAI(
+            model="gemini-1.5-pro", 
+            google_api_key=os.getenv("GOOGLE_API_KEY"),
+            streaming=True
         )
     
     # Anthropic models - requires ANTHROPIC_API_KEY
     if os.getenv("ANTHROPIC_API_KEY"):
         clients["claude-3-haiku-20240307"] = lambda: ChatAnthropic(
             model="claude-3-haiku-20240307", 
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")
+            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+            streaming=True
+        )
+        clients["claude-3-opus-20240229"] = lambda: ChatAnthropic(
+            model="claude-3-opus-20240229", 
+            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
+            streaming=True
         )
     
     # Groq models - requires GROQ_API_KEY
@@ -130,12 +146,14 @@ def get_model_clients():
         # Using Llama 3 models from Groq
         clients["llama-3.3-70b-versatile"] = lambda: ChatGroq(
             model="llama-3.3-70b-versatile",
-            api_key=os.getenv("GROQ_API_KEY")
+            api_key=os.getenv("GROQ_API_KEY"),
+            streaming=True
         )
         # Add another Groq model option
         clients["mixtral-8x7b-32768"] = lambda: ChatGroq(
             model="mixtral-8x7b-32768",
-            api_key=os.getenv("GROQ_API_KEY")
+            api_key=os.getenv("GROQ_API_KEY"),
+            streaming=True
         )
     
     return clients
@@ -333,11 +351,10 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
 async def stream_chat_response(messages, model, thread_id, use_agent, deep_research, file_url):
     """Generate a streaming response for chat."""
     try:
-        # Initial status update with debug info
-        logger.info(f"Starting stream_chat_response: model={model}, thread_id={thread_id}, use_agent={use_agent}")
-        yield json.dumps({"type": "status", "status": "Thinking..."}) + "\n"
+        # Initial status update with no delay
+        yield json.dumps({"type": "status", "status": "Processing..."}) + "\n"
         
-        # Check if we have a model client for the requested model
+        # Model client validation (keep existing code)
         if model not in MODEL_CLIENTS:
             logger.warning(f"Model {model} not found in available models: {list(MODEL_CLIENTS.keys())}")
             if not MODEL_CLIENTS:
@@ -354,31 +371,13 @@ async def stream_chat_response(messages, model, thread_id, use_agent, deep_resea
             model = next(iter(MODEL_CLIENTS.keys()))
             logger.warning(f"Falling back to: {model}")
         
-        # Get the appropriate model client
+        # Get the model client (already configured with streaming=True)
         model_client = MODEL_CLIENTS[model]()
-        logger.info(f"Got model client for {model}")
-        
-        # Add safety check for empty messages with better logging
-        if not messages:
-            logger.warning("No messages provided to stream_chat_response")
-            yield json.dumps({
-                "type": "result",
-                "message": {"role": "assistant", "content": "I received an empty message. How can I help you?"},
-                "thread_id": thread_id
-            }) + "\n"
-            return
-            
-        # Log messages for debugging
-        logger.info(f"Processing messages: {len(messages)} messages")
-        for i, m in enumerate(messages):
-            logger.info(f"Message {i}: type={type(m)}, role={getattr(m, 'type', 'unknown')}, content_length={len(m.content) if hasattr(m, 'content') else 0}")
+        logger.info(f"Using streaming-enabled model: {model}")
         
         if use_agent:
-            # Generate a few status updates for the agent
-            yield json.dumps({"type": "status", "status": "Planning response..."}) + "\n"
-            await asyncio.sleep(0.5)
-            yield json.dumps({"type": "status", "status": "Processing information..."}) + "\n"
-            await asyncio.sleep(0.5)
+            # For agent, we need a different approach since agents don't natively stream
+            yield json.dumps({"type": "status", "status": "Running agent..."}) + "\n"
             
             # Prepare input state for the agent
             input_state = VaaniState(
@@ -397,8 +396,26 @@ async def stream_chat_response(messages, model, thread_id, use_agent, deep_resea
             
             # Process with agent
             try:
-                # Get the full response first
-                result = await asyncio.to_thread(agt_graph.invoke, input_state, config)
+                # Start a background task for the agent processing
+                async def run_agent():
+                    return await asyncio.to_thread(agt_graph.invoke, input_state, config)
+                
+                agent_task = asyncio.create_task(run_agent())
+                
+                # Show progress updates while agent is running
+                progress_steps = ["Thinking", "Processing", "Analyzing", "Formulating response"]
+                step_index = 0
+                
+                while not agent_task.done():
+                    yield json.dumps({"type": "status", "status": f"{progress_steps[step_index]}..."}) + "\n"
+                    step_index = (step_index + 1) % len(progress_steps)
+                    try:
+                        await asyncio.wait_for(asyncio.shield(agent_task), 1.0)
+                    except asyncio.TimeoutError:
+                        pass
+                
+                # Get result from completed task
+                result = await agent_task
                 
                 # Extract response content
                 if "messages" in result and result["messages"] and len(result["messages"]) > 0:
@@ -412,21 +429,27 @@ async def stream_chat_response(messages, model, thread_id, use_agent, deep_resea
                 else:
                     response_content = "I couldn't process your request with the AI agent. Please try again."
                 
-                # Stream it word by word
+                # KEY CHANGE: Stream one token/chunk at a time instead of cumulative content
                 words = response_content.split(' ')
-                current_response = ""
+                buffer = ""
+                word_count = 0
                 
-                for i, word in enumerate(words):
-                    current_response += word + ' '
-                    if i % 3 == 0 or i == len(words) - 1:  # Send every 3 words
+                for word in words:
+                    buffer += word + " "
+                    word_count += 1
+                    
+                    # Send after every few words or punctuation
+                    if word_count >= 3 or any(char in word for char in ['.', '!', '?', '\n']):
                         yield json.dumps({
-                            "type": "token",
-                            "token": current_response,
+                            "type": "chunk",
+                            "chunk": buffer,
                             "thread_id": thread_id
                         }) + "\n"
-                        await asyncio.sleep(0.05)  # Small delay between updates
+                        buffer = ""
+                        word_count = 0
+                        await asyncio.sleep(random.uniform(0.005, 0.015))
                 
-                # Send final result
+                # Send final complete message
                 yield json.dumps({
                     "type": "result",
                     "message": {"role": "assistant", "content": response_content},
@@ -442,32 +465,40 @@ async def stream_chat_response(messages, model, thread_id, use_agent, deep_resea
                 }) + "\n"
         
         else:
-            # Direct model conversation without agent
+            # Direct model conversation with real streaming
             try:
-                # For simplicity, get the full response first
-                ai_response = await asyncio.to_thread(model_client.invoke, messages)
-                response_content = ai_response.content
-                
-                # Now stream it word by word
-                words = response_content.split(' ')
-                current_response = ""
-                
-                for i, word in enumerate(words):
-                    current_response += word + ' '
-                    if i % 3 == 0 or i == len(words) - 1:  # Send every 3 words
-                        yield json.dumps({
-                            "type": "token",
-                            "token": current_response,
-                            "thread_id": thread_id
-                        }) + "\n"
-                        await asyncio.sleep(0.05)  # Small delay between updates
-                
-                # Send final result
-                yield json.dumps({
-                    "type": "result",
-                    "message": {"role": "assistant", "content": response_content},
-                    "thread_id": thread_id
-                }) + "\n"
+                # Choose streaming method based on available API
+                if hasattr(model_client, "astream") and callable(getattr(model_client, "astream")):
+                    logger.info(f"Using astream for {model}")
+                    stream = model_client.astream(messages)
+                    
+                    # Process tokens individually instead of accumulating
+                    async for chunk in stream:
+                        # Extract content based on model response format
+                        chunk_content = ""
+                        if hasattr(chunk, "content") and chunk.content:
+                            chunk_content = chunk.content
+                        elif isinstance(chunk, dict) and "content" in chunk:
+                            chunk_content = chunk["content"]
+                        elif hasattr(chunk, "delta") and hasattr(chunk.delta, "content") and chunk.delta.content:
+                            chunk_content = chunk.delta.content
+                        
+                        if chunk_content:
+                            # Send each chunk immediately as it arrives without accumulating
+                            yield json.dumps({
+                                "type": "chunk",
+                                "chunk": chunk_content,
+                                "thread_id": thread_id
+                            }) + "\n"
+                            # MODIFIED: Decreased delay to 0.005-0.015s (2x faster)
+                            await asyncio.sleep(random.uniform(0.005, 0.015))
+                    
+                    # Send final result signal (frontend will have accumulated the full message)
+                    yield json.dumps({
+                        "type": "done",
+                        "thread_id": thread_id
+                    }) + "\n"
+                    return
                 
             except Exception as model_error:
                 logger.error(f"Error in model processing: {model_error}", exc_info=True)
@@ -566,6 +597,26 @@ async def react_agent_search(request: ReactAgentRequest):
             if "messages" in result and result["messages"]:
                 ai_message = result["messages"][-1]
                 response_content = ai_message.content
+                
+                # Add source citation formatting to ensure search results are properly cited
+                search_tool_outputs = [msg for msg in result["messages"] if hasattr(msg, "tool_calls") and msg.tool_calls]
+                
+                if search_tool_outputs:
+                    sources = []
+                    for msg in search_tool_outputs:
+                        for tool_call in msg.tool_calls:
+                            if tool_call.get("name") == "search" and tool_call.get("output"):
+                                tool_output = tool_call.get("output")
+                                if isinstance(tool_output, list):
+                                    for item in tool_output:
+                                        if item.get("url") and item.get("title"):
+                                            sources.append({
+                                                'url': item.get('url'),
+                                                'title': item.get('title')
+                                            })
+                    
+                    if sources:
+                        response_content += format_source_urls(sources)
             else:
                 logger.warning("No messages found in react-agent result")
                 response_content = "I couldn't find any useful information. Please try a different query."
@@ -607,8 +658,7 @@ async def react_agent_search_streaming(request: ReactAgentRequest):
         """Generate server-sent events with status updates."""
         try:
             # Initial status
-            yield json.dumps({"type": "status", "status": "Starting research agent..."}) + "\n"
-            await asyncio.sleep(0.5)
+            yield json.dumps({"type": "status", "status": "Starting research..."}) + "\n"
             
             # Convert frontend messages to LangChain format
             langchain_messages = []
@@ -659,63 +709,92 @@ async def react_agent_search_streaming(request: ReactAgentRequest):
                 "callback": status_callback
             }}
             
-            # Status updates for different phases
-            yield json.dumps({"type": "status", "status": "Planning search queries..."}) + "\n"
-            await asyncio.sleep(1)
+            # Create a task to run the react_graph.ainvoke call
+            async def run_react_agent():
+                return await react_graph.ainvoke(input_state, config_dict)
             
-            yield json.dumps({"type": "status", "status": "Searching the web for information..."}) + "\n"
-            await asyncio.sleep(2)
+            task = asyncio.create_task(run_react_agent())
             
-            # Start processing - we'll run this in a background task since we're streaming
-            # Here we should refactor react_graph to provide streaming updates, but for now we'll simulate
+            # Send real-time status updates while the task runs
+            yield json.dumps({"type": "status", "status": "Researching..."}) + "\n"
             
-            # Simulate some status updates during processing
-            search_phases = [
-                "Analyzing search results...",
-                "Collecting relevant information...",
-                "Verifying data from multiple sources...",
-                "Synthesizing findings..."
-            ]
+            # Then rely on actual status updates from the agent instead of fake ones
+            while not task.done():
+                try:
+                    # Wait a short time before checking again
+                    await asyncio.wait_for(asyncio.shield(task), 0.5)
+                except asyncio.TimeoutError:
+                    # Task not done yet, continue
+                    pass
             
-            for phase in search_phases:
-                yield json.dumps({"type": "status", "status": phase}) + "\n"
-                await asyncio.sleep(1.5)  # Simulate processing time
+            # Get result from completed task
+            result = await task
             
-            # Now do the actual processing
-            try:
-                # We'd ideally modify react_graph.ainvoke to accept a callback for status updates
-                # For now, we'll just call it normally
-                result = await react_graph.ainvoke(input_state, config_dict)
+            # Extract the assistant's response (keep existing code)
+            if "messages" in result and result["messages"]:
+                ai_message = result["messages"][-1]
+                response_content = ai_message.content
                 
-                # Extract the assistant's response
-                if "messages" in result and result["messages"]:
-                    ai_message = result["messages"][-1]
-                    response_content = ai_message.content
-                else:
-                    logger.warning("No messages found in react-agent result")
-                    response_content = "I couldn't find any useful information. Please try a different query."
+                # Add source citation formatting to ensure search results are properly cited
+                search_tool_outputs = [msg for msg in result["messages"] if hasattr(msg, "tool_calls") and msg.tool_calls]
                 
-                # Notify that processing is complete
-                yield json.dumps({"type": "status", "status": "Finalizing response..."}) + "\n"
-                await asyncio.sleep(0.5)
+                if search_tool_outputs:
+                    sources = []
+                    for msg in search_tool_outputs:
+                        for tool_call in msg.tool_calls:
+                            if tool_call.get("name") == "search" and tool_call.get("output"):
+                                tool_output = tool_call.get("output")
+                                if isinstance(tool_output, list):
+                                    for item in tool_output:
+                                        if item.get("url") and item.get("title"):
+                                            sources.append({
+                                                'url': item.get('url'),
+                                                'title': item.get('title')
+                                            })
+                    
+                    if sources:
+                        response_content += format_source_urls(sources)
+            else:
+                logger.warning("No messages found in react-agent result")
+                response_content = "I couldn't find any useful information. Please try a different query."
+            
+            # Stream the response back word-by-word for a fluid experience
+            words = response_content.split(' ')
+            buffer = ""
+            word_count = 0
+            
+            for word in words:
+                buffer += word + " "
+                word_count += 1
                 
-                # Send the final result
-                final_result = {
-                    "type": "result",
-                    "message": {"role": "assistant", "content": response_content},
+                # Send after every few words or punctuation
+                if word_count >= 3 or any(char in word for char in ['.', '!', '?', '\n']):
+                    yield json.dumps({
+                        "type": "chunk",
+                        "chunk": buffer,
+                        "thread_id": thread_id
+                    }) + "\n"
+                    buffer = ""
+                    word_count = 0
+                    await asyncio.sleep(random.uniform(0.005, 0.015))
+            
+            # Send any remaining buffer
+            if buffer:
+                yield json.dumps({
+                    "type": "chunk",
+                    "chunk": buffer,
                     "thread_id": thread_id
-                }
-                yield json.dumps(final_result) + "\n"
-                
-            except Exception as agent_error:
-                logger.error(f"Error in react-agent processing: {agent_error}", exc_info=True)
-                error_result = {
-                    "type": "result",
-                    "message": {"role": "assistant", "content": f"I encountered an error with the research agent: {str(agent_error)}"},
-                    "thread_id": thread_id
-                }
-                yield json.dumps(error_result) + "\n"
+                }) + "\n"
+                # Small delay before final result (also doubled)
+                await asyncio.sleep(0.025)
             
+            # Send final result
+            yield json.dumps({
+                "type": "result",
+                "message": {"role": "assistant", "content": response_content},
+                "thread_id": thread_id
+            }) + "\n"
+                
         except Exception as e:
             logger.error(f"Error in streaming: {e}", exc_info=True)
             error_result = {
@@ -741,6 +820,36 @@ async def health_check():
         "deployment": "Vaani API successfully deployed on Vercel!",
         "environment": "Vercel" if os.getenv("VERCEL") else "Development"
     }
+
+# Add this helper function to format source URLs with titles
+def format_source_urls(sources):
+    if not sources:
+        return ""
+    
+    formatted_sources = []
+    for source in sources:
+        title = source.get('title', 'Source')
+        url = source.get('url', '')
+        if url:
+            # Clean and truncate the title if needed
+            title = title.strip()
+            if len(title) > 60:
+                title = title[:57] + "..."
+            formatted_sources.append(f"[{title}]({url})")
+    
+    if formatted_sources:
+        return "\n\n**Sources:**\n" + "\n".join(formatted_sources)
+    return ""
+
+# Add this function to instruct the AI about media generation
+def handle_media_generation(prompt, media_type="image"):
+    """Instructs the AI to properly format media generation results."""
+    if media_type == "image":
+        # For image generation, instruct the AI to include proper image markdown
+        return f"For image generation of '{prompt}', please include image URLs in markdown format: ![Generated Image](URL)"
+    elif media_type == "music":
+        # For music generation, instruct the AI about audio URLs
+        return f"For music generation of '{prompt}', please include audio URLs directly, preferably as mp3 links."
 
 if __name__ == "__main__":
     import uvicorn
