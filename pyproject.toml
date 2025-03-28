@@ -36,6 +36,16 @@ dependencies = [
     "sse-starlette>=1.6.1",
     "aiofiles>=23.1.0",
     "backoff>=2.2.1",
+    "langchain-qdrant",
+    "typing-extensions",
+    "qdrant-client",
+    "aiohttp",
+    "async-timeout",
+    "cloudflare>=2.8.15",
+    "cloudflared>=2024.2.0",
+    "wrangler>=3.28.1",
+    "python-jose[cryptography]>=3.3.0",
+    "secure>=0.3.0",
 ]
 
 [project.optional-dependencies]

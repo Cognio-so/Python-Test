@@ -48,13 +48,11 @@ app = FastAPI(title="Vaani.pro API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://vanni-test-frontend.vercel.app",
-        "http://localhost:5173", 
-        "http://localhost:5174",
+        "https://vanni-test-frontend.vercel.app",  # Match config.yml
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Cookie", "Accept"],
+    allow_methods=["GET", "POST", PUT, "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Configuration
@@ -811,14 +809,12 @@ async def react_agent_search_streaming(request: ReactAgentRequest):
     )
 
 # Update health check endpoint
-@app.get("/api/health")
+@app.get("/health")
 async def health_check():
-    """Health check endpoint to verify API is running."""
     return {
-        "status": "ok", 
-        "timestamp": time.time(),
-        "deployment": "Vaani API successfully deployed on Vercel!",
-        "environment": "Vercel" if os.getenv("VERCEL") else "Development"
+        "status": "healthy",
+        "version": "1.0.0",
+        "environment": "production"
     }
 
 # Add this helper function to format source URLs with titles
