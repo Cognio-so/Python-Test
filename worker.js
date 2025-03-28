@@ -1,5 +1,5 @@
 export default {
-  async fetch(request, env) {
+  async fetch(request) {
     // Handle OPTIONS preflight requests
     if (request.method === "OPTIONS") {
       return new Response(null, {
