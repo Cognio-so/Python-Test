@@ -1,5 +1,54 @@
 {
   "version": 1,
   "include": ["/*"],
-  "exclude": []
+  "exclude": [],
+  "routes": [
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/.*",
+      "methods": ["OPTIONS"],
+      "continue": true,
+      "headers": {
+        "Access-Control-Allow-Origin": "https://vanni-test-frontend.vercel.app",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Session-ID, X-Request-ID, X-Cancel-Previous",
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Max-Age": "86400"
+      }
+    },
+    {
+      "src": "/chat",
+      "dest": "/_middleware"
+    },
+    {
+      "src": "/agent-chat",
+      "dest": "/_middleware"
+    },
+    {
+      "src": "/agent-chat/streaming",
+      "dest": "/_middleware"
+    },
+    {
+      "src": "/related-questions",
+      "dest": "/_middleware"
+    },
+    {
+      "src": "/health",
+      "dest": "/_middleware"
+    },
+    {
+      "src": "/models",
+      "dest": "/_middleware"
+    },
+    {
+      "src": "/upload",
+      "dest": "/_middleware"
+    },
+    {
+      "src": "/api/.*",
+      "dest": "/api/[0]"
+    }
+  ]
 }

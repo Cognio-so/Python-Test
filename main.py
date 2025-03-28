@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any, AsyncGenerator
 import os
@@ -50,8 +50,7 @@ app.add_middleware(
     allow_origins=["https://vanni-test-frontend.vercel.app"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-    max_age=86400,
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Configuration
@@ -845,17 +844,6 @@ def handle_media_generation(prompt, media_type="image"):
     elif media_type == "music":
         # For music generation, instruct the AI about audio URLs
         return f"For music generation of '{prompt}', please include audio URLs directly, preferably as mp3 links."
-
-# Add explicit OPTIONS route handlers for each endpoint
-@app.options("/api/chat")
-async def options_chat():
-    # This will handle OPTIONS preflight requests for the /api/chat endpoint
-    return {}  # FastAPI will automatically add the CORS headers from middleware
-
-@app.options("/api/{path:path}")
-async def options_all(path: str):
-    # This is a catch-all handler for any other API endpoints
-    return {}
 
 if __name__ == "__main__":
     import uvicorn
