@@ -845,6 +845,10 @@ def handle_media_generation(prompt, media_type="image"):
         # For music generation, instruct the AI about audio URLs
         return f"For music generation of '{prompt}', please include audio URLs directly, preferably as mp3 links."
 
+@app.options("/{full_path:path}")
+async def options_handler(full_path: str):
+    return {}  # This will return 200 OK with CORS headers applied by middleware
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000) 
