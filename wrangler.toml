@@ -4,22 +4,26 @@ workers_dev = true
 
 [build]
 command = "pip install -r requirements.txt && pip install -e . && mkdir -p dist && cp -r . dist/ && cp main.py dist/index.py"
-output_dir = "dist"
 
+[site]
+bucket = "./dist"
+
+[build.upload]
+format = "service-worker"
+
+# The output directory for your build
+[build.output]
+directory = "dist"
+
+# Environment variables
 [vars]
 ENVIRONMENT = "production"
 
 # Configure CORS
-[[headers]]
+[[routes]]
 pattern = "/*"
-headers = [
-  { key = "Access-Control-Allow-Origin", value = "https://vanni-test-frontend.vercel.app" },
-  { key = "Access-Control-Allow-Methods", value = "GET, POST, PUT, DELETE, OPTIONS" },
-  { key = "Access-Control-Allow-Headers", value = "Content-Type, Authorization" },
-  { key = "Access-Control-Max-Age", value = "86400" }
-]
-
-pages_build_output_dir = "dist"
-
-[site]
-bucket = "./dist"
+[routes.headers]
+Access-Control-Allow-Origin = "https://vanni-test-frontend.vercel.app"
+Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
+Access-Control-Allow-Headers = "Content-Type, Authorization"
+Access-Control-Max-Age = "86400"
