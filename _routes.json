@@ -19,36 +19,32 @@
       }
     },
     {
-      "src": "/chat",
+      "src": "/api/chat",
       "dest": "/_middleware"
     },
     {
-      "src": "/agent-chat",
+      "src": "/api/react-search",
       "dest": "/_middleware"
     },
     {
-      "src": "/agent-chat/streaming",
+      "src": "/api/react-search-streaming",
       "dest": "/_middleware"
     },
     {
-      "src": "/related-questions",
+      "src": "/api/related-questions",
       "dest": "/_middleware"
     },
     {
-      "src": "/health",
+      "src": "/api/health",
       "dest": "/_middleware"
     },
     {
-      "src": "/models",
+      "src": "/api/models",
       "dest": "/_middleware"
     },
     {
-      "src": "/upload",
+      "src": "/api/upload",
       "dest": "/_middleware"
-    },
-    {
-      "src": "/api/.*",
-      "dest": "/api/[0]"
     }
   ]
 }

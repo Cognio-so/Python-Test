@@ -16,22 +16,24 @@ export async function onRequest(context) {
       });
     }
     
-    // API endpoint mapping from frontend to backend
-    const apiEndpoints = {
-      '/chat': '/api/chat',
-      '/agent-chat': '/api/react-search',
-      '/agent-chat/streaming': '/api/react-search-streaming',
-      '/related-questions': '/api/related-questions',
-      '/health': '/api/health',
-      '/models': '/api/models',
-      '/upload': '/api/upload'
+    // Direct API route handling only
+    const directApiEndpoints = {
+      '/api/chat': '/api/chat',
+      '/api/react-search': '/api/react-search',
+      '/api/react-search-streaming': '/api/react-search-streaming',
+      '/api/related-questions': '/api/related-questions',
+      '/api/health': '/api/health',
+      '/api/models': '/api/models',
+      '/api/upload': '/api/upload'
     };
     
     // Check if this is an API endpoint we need to forward
     let targetPath = null;
-    for (const [frontendPath, backendPath] of Object.entries(apiEndpoints)) {
-      if (url.pathname.startsWith(frontendPath)) {
-        targetPath = url.pathname.replace(frontendPath, backendPath);
+    
+    // Check direct API routes
+    for (const [directPath, backendPath] of Object.entries(directApiEndpoints)) {
+      if (url.pathname.startsWith(directPath)) {
+        targetPath = url.pathname;
         break;
       }
     }
@@ -62,8 +64,8 @@ export async function onRequest(context) {
         responseHeaders.set("Access-Control-Allow-Origin", "https://vanni-test-frontend.vercel.app");
         responseHeaders.set("Access-Control-Allow-Credentials", "true");
         
-        // Set streaming headers for chat and agent-chat endpoints
-        if (url.pathname.startsWith('/chat') || url.pathname.startsWith('/agent-chat')) {
+        // Set streaming headers for API chat endpoints
+        if (url.pathname.includes('/api/chat') || url.pathname.includes('/api/react-search')) {
           responseHeaders.set("Content-Type", "text/event-stream");
           responseHeaders.set("Cache-Control", "no-cache");
           responseHeaders.set("Connection", "keep-alive");
