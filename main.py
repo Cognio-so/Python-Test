@@ -48,7 +48,7 @@ app = FastAPI(title="Vaani.pro API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://vanni-test-frontend.vercel.app",  # Match config.yml
+        "https://www.vaani.pro",  # Match config.yml
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", PUT, "DELETE", "OPTIONS"],
