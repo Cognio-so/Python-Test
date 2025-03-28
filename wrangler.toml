@@ -3,15 +3,11 @@ compatibility_date = "2024-03-27"
 workers_dev = true
 
 [build]
-command = "pip install -r requirements.txt"
+command = "pip install -r requirements.txt && python install -e ."
+output_dir = "dist"
 
 [vars]
 ENVIRONMENT = "production"
-
-# Add your routes
-[[routes]]
-pattern = "api/*"
-script = "api/index.js"
 
 # Configure CORS
 [[headers]]
@@ -22,3 +18,5 @@ headers = [
   { key = "Access-Control-Allow-Headers", value = "Content-Type, Authorization" },
   { key = "Access-Control-Max-Age", value = "86400" }
 ]
+
+pages_build_output_dir = "dist"
