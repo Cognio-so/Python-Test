@@ -5,15 +5,8 @@ workers_dev = true
 [build]
 command = "chmod +x build.sh && ./build.sh"
 
-[site]
-bucket = "./dist"
-
 [build.upload]
 format = "service-worker"
-
-# The output directory for your build
-[build.output]
-directory = "dist"
 
 # Environment variables
 [vars]
