@@ -4,28 +4,26 @@ workers_dev = true
 
 [build]
 command = "chmod +x build.sh && ./build.sh"
+output_dir = "dist"
 
-[build.upload]
-format = "service-worker"
+# Set this to match output_dir
+pages_build_output_dir = "dist"
 
-# Environment variables
 [vars]
 ENVIRONMENT = "production"
 
-# Configure CORS
-[[routes]]
+# Configure CORS - use this proper format for Pages
+[[headers]]
 pattern = "/*"
-[routes.headers]
-Access-Control-Allow-Origin = "https://vanni-test-frontend.vercel.app"
-Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
-Access-Control-Allow-Headers = "Content-Type, Authorization"
-Access-Control-Max-Age = "86400"
+headers = [
+  { key = "Access-Control-Allow-Origin", value = "https://vanni-test-frontend.vercel.app" },
+  { key = "Access-Control-Allow-Methods", value = "GET, POST, PUT, DELETE, OPTIONS" },
+  { key = "Access-Control-Allow-Headers", value = "Content-Type, Authorization" },
+  { key = "Access-Control-Max-Age", value = "86400" }
+]
 
 [site]
 bucket = "./dist"
 
 [build.output]
 directory = "dist"
-
-# Add this for Cloudflare Pages
-pages_build_output_dir = "."
