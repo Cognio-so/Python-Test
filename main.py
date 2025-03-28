@@ -50,7 +50,8 @@ app.add_middleware(
     allow_origins=["https://vanni-test-frontend.vercel.app"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["*"],
+    max_age=86400,
 )
 
 # Configuration
@@ -845,18 +846,16 @@ def handle_media_generation(prompt, media_type="image"):
         # For music generation, instruct the AI about audio URLs
         return f"For music generation of '{prompt}', please include audio URLs directly, preferably as mp3 links."
 
-@app.options("/{full_path:path}")
-async def options_handler(full_path: str):
-    return JSONResponse(
-        content={},
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Origin": "https://vanni-test-frontend.vercel.app",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
-            "Access-Control-Max-Age": "86400"
-        }
-    )
+# Add explicit OPTIONS route handlers for each endpoint
+@app.options("/api/chat")
+async def options_chat():
+    # This will handle OPTIONS preflight requests for the /api/chat endpoint
+    return {}  # FastAPI will automatically add the CORS headers from middleware
+
+@app.options("/api/{path:path}")
+async def options_all(path: str):
+    # This is a catch-all handler for any other API endpoints
+    return {}
 
 if __name__ == "__main__":
     import uvicorn
