@@ -1,3 +1,4 @@
 name = "cognio-agent-api"
 compatibility_date = "2024-03-27"
 pages_build_output_dir = "."
+main = "worker.js"
