@@ -1,22 +1,11 @@
 name = "cognio-agent-api"
 compatibility_date = "2024-03-27"
-main = "worker.js"
 
-# Use current directory as output
+# This tells Cloudflare Pages where to find your built files
 pages_build_output_dir = "."
 
-[build]
-command = "chmod +x build.sh && ./build.sh"
-
-[site]
-bucket = "."
-
-# Correct format for Pages headers
-[[headers]]
-pattern = "/*"
-headers = [
-  { key = "Access-Control-Allow-Origin", value = "https://vanni-test-frontend.vercel.app" },
-  { key = "Access-Control-Allow-Methods", value = "GET, POST, PUT, DELETE, OPTIONS" },
-  { key = "Access-Control-Allow-Headers", value = "Content-Type, Authorization" },
-  { key = "Access-Control-Max-Age", value = "86400" }
-]
+# CORS headers for Pages - this is the correct format
+[[build.upload.rules]]
+type = "Headers"
+globs = ["/*"]
+headers = {Access-Control-Allow-Origin = "https://vanni-test-frontend.vercel.app", Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS", Access-Control-Allow-Headers = "Content-Type, Authorization", Access-Control-Max-Age = "86400"}
