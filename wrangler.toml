@@ -16,7 +16,7 @@ ENVIRONMENT = "production"
 [[routes]]
 pattern = "/*"
 [routes.headers]
-Access-Control-Allow-Origin = "https://www.vaani.pro"
+Access-Control-Allow-Origin = "https://vanni-test-frontend.vercel.app"
 Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
 Access-Control-Allow-Headers = "Content-Type, Authorization"
 Access-Control-Max-Age = "86400"
