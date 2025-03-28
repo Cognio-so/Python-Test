@@ -2,33 +2,23 @@
 pip install -r requirements.txt 
 pip install -e .
 mkdir -p dist
-cp main.py dist/index.py
-cp -r static dist/ 2>/dev/null || true
-cp -r templates dist/ 2>/dev/null || true
-echo '
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-import os
-
-# Import the app from main.py
-from index import app as main_app
-
-app = FastAPI()
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://vanni-test-frontend.vercel.app"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Include the routes from main_app
-app.include_router(main_app.router)
-
-# Handle OPTIONS requests explicitly
-@app.options("/{path:path}")
-async def options_route(request: Request, path: str):
-    return {}
-' > dist/_worker.js
+cp main.py dist/
+# Create a worker script that handles CORS preflight requests
+echo 'export default {
+  async fetch(request, env, ctx) {
+    // Handle CORS preflight requests
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        headers: {
+          "Access-Control-Allow-Origin": "https://vanni-test-frontend.vercel.app",
+          "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
+          "Access-Control-Max-Age": "86400"
+        }
+      });
+    }
+    
+    // Pass through to Python function
+    return await env.PYTHON.fetch(request);
+  }
+}' > dist/_worker.js
