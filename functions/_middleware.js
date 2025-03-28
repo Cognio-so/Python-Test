@@ -7,7 +7,7 @@ export async function onRequest(context) {
       return new Response(null, {
         status: 200,
         headers: {
-          "Access-Control-Allow-Origin": "https://vanni-test-frontend.vercel.app",
+          "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Session-ID, X-Request-ID, X-Cancel-Previous",
           "Access-Control-Allow-Credentials": "true",
@@ -61,7 +61,7 @@ export async function onRequest(context) {
         
         // Create a new response with CORS headers
         const responseHeaders = new Headers(apiResponse.headers);
-        responseHeaders.set("Access-Control-Allow-Origin", "https://vanni-test-frontend.vercel.app");
+        responseHeaders.set("Access-Control-Allow-Origin", "*");
         responseHeaders.set("Access-Control-Allow-Credentials", "true");
         
         // Set streaming headers for API chat endpoints
@@ -83,7 +83,9 @@ export async function onRequest(context) {
           status: 500,
           headers: {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "https://vanni-test-frontend.vercel.app",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Session-ID, X-Request-ID, X-Cancel-Previous",
             "Access-Control-Allow-Credentials": "true",
           },
         });
@@ -93,7 +95,7 @@ export async function onRequest(context) {
     // For non-API routes, let Cloudflare Pages handle it
     const response = await context.next();
     const newResponse = new Response(response.body, response);
-    newResponse.headers.set("Access-Control-Allow-Origin", "https://vanni-test-frontend.vercel.app");
+    newResponse.headers.set("Access-Control-Allow-Origin", "*");
     newResponse.headers.set("Access-Control-Allow-Credentials", "true");
     
     return newResponse;
