@@ -52,7 +52,6 @@ exa-py
 
 # Cloudflare specific
 cloudflare>=2.8.15
-cloudflared>=2024.2.0
 wrangler>=3.28.1
 
 # Security
