@@ -47,10 +47,14 @@ app = FastAPI(title="Vaani.pro API")
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://vanni-test-frontend.vercel.app"],
+    allow_origins=[
+        "https://vanni-test-frontend.vercel.app",
+        "http://localhost:5173", 
+        "http://localhost:5174",
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "Cookie", "Accept"],
 )
 
 # Configuration
@@ -345,12 +349,15 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
 
 # Add the streaming function for the chat endpoint
 async def stream_chat_response(messages, model, thread_id, use_agent, deep_research, file_url):
-    """Generate a streaming response for chat."""
     try:
-        # Initial status update with no delay
-        yield json.dumps({"type": "status", "status": "Processing..."}) + "\n"
-        
-        # Model client validation (keep existing code)
+        # Remove initial delay/status for non-agent conversations
+        if not use_agent and not deep_research:
+            # Skip initial status update for regular chat
+            pass
+        else:
+            yield json.dumps({"type": "status", "status": "Processing..."}) + "\n"
+
+        # Model client validation
         if model not in MODEL_CLIENTS:
             logger.warning(f"Model {model} not found in available models: {list(MODEL_CLIENTS.keys())}")
             if not MODEL_CLIENTS:
@@ -367,11 +374,45 @@ async def stream_chat_response(messages, model, thread_id, use_agent, deep_resea
             model = next(iter(MODEL_CLIENTS.keys()))
             logger.warning(f"Falling back to: {model}")
         
-        # Get the model client (already configured with streaming=True)
         model_client = MODEL_CLIENTS[model]()
-        logger.info(f"Using streaming-enabled model: {model}")
         
-        if use_agent:
+        if not use_agent:
+            # Direct model conversation with optimized streaming
+            try:
+                if hasattr(model_client, "astream"):
+                    stream = model_client.astream(messages)
+                    async for chunk in stream:
+                        chunk_content = ""
+                        if hasattr(chunk, "content") and chunk.content:
+                            chunk_content = chunk.content
+                        elif isinstance(chunk, dict) and "content" in chunk:
+                            chunk_content = chunk["content"]
+                        elif hasattr(chunk, "delta") and hasattr(chunk.delta, "content"):
+                            chunk_content = chunk.delta.content
+                        
+                        if chunk_content:
+                            # Remove delay for regular chat to reduce latency
+                            yield json.dumps({
+                                "type": "chunk",
+                                "chunk": chunk_content,
+                                "thread_id": thread_id
+                            }) + "\n"
+                    
+                    yield json.dumps({
+                        "type": "done",
+                        "thread_id": thread_id
+                    }) + "\n"
+                    return
+                
+            except Exception as model_error:
+                logger.error(f"Error in model processing: {model_error}", exc_info=True)
+                yield json.dumps({
+                    "type": "result",
+                    "message": {"role": "assistant", "content": f"Error: {str(model_error)}"},
+                    "thread_id": thread_id
+                }) + "\n"
+        
+        else:
             # For agent, we need a different approach since agents don't natively stream
             yield json.dumps({"type": "status", "status": "Running agent..."}) + "\n"
             
@@ -457,50 +498,6 @@ async def stream_chat_response(messages, model, thread_id, use_agent, deep_resea
                 yield json.dumps({
                     "type": "result",
                     "message": {"role": "assistant", "content": f"I encountered an error with the AI agent: {str(invoke_error)}"},
-                    "thread_id": thread_id
-                }) + "\n"
-        
-        else:
-            # Direct model conversation with real streaming
-            try:
-                # Choose streaming method based on available API
-                if hasattr(model_client, "astream") and callable(getattr(model_client, "astream")):
-                    logger.info(f"Using astream for {model}")
-                    stream = model_client.astream(messages)
-                    
-                    # Process tokens individually instead of accumulating
-                    async for chunk in stream:
-                        # Extract content based on model response format
-                        chunk_content = ""
-                        if hasattr(chunk, "content") and chunk.content:
-                            chunk_content = chunk.content
-                        elif isinstance(chunk, dict) and "content" in chunk:
-                            chunk_content = chunk["content"]
-                        elif hasattr(chunk, "delta") and hasattr(chunk.delta, "content") and chunk.delta.content:
-                            chunk_content = chunk.delta.content
-                        
-                        if chunk_content:
-                            # Send each chunk immediately as it arrives without accumulating
-                            yield json.dumps({
-                                "type": "chunk",
-                                "chunk": chunk_content,
-                                "thread_id": thread_id
-                            }) + "\n"
-                            # MODIFIED: Decreased delay to 0.005-0.015s (2x faster)
-                            await asyncio.sleep(random.uniform(0.005, 0.015))
-                    
-                    # Send final result signal (frontend will have accumulated the full message)
-                    yield json.dumps({
-                        "type": "done",
-                        "thread_id": thread_id
-                    }) + "\n"
-                    return
-                
-            except Exception as model_error:
-                logger.error(f"Error in model processing: {model_error}", exc_info=True)
-                yield json.dumps({
-                    "type": "result",
-                    "message": {"role": "assistant", "content": f"I encountered an error with the {model} model: {str(model_error)}"},
                     "thread_id": thread_id
                 }) + "\n"
     
@@ -674,7 +671,7 @@ async def react_agent_search_streaming(request: ReactAgentRequest):
             model_mapping = {
                 "gemini-1.5-flash": "google/gemini-1.5-flash",
                 "gpt-4o-mini": "openai/gpt-4o-mini",
-                "gpt-4o": "openai/gpt-4o",  # Fixed duplicate with unique value
+                "gpt-4o": "openai/gpt-4o",
                 "claude-3-haiku-20240307": "anthropic/claude-3-haiku-20240307",
                 "llama-3.3-70b-versatile": "groq/llama-3.3-70b-versatile",
                 "mixtral-8x7b-32768": "groq/mixtral-8x7b-32768"
@@ -689,34 +686,39 @@ async def react_agent_search_streaming(request: ReactAgentRequest):
                 max_search_results=request.max_search_results
             )
             
-            # Add callback for status updates
-            class StatusCallback:
-                async def on_agent_action(self, action_type, description):
-                    status_update = {"type": "status", "status": f"{action_type}: {description}"}
-                    yield json.dumps(status_update) + "\n"
-                    await asyncio.sleep(0.1)
-            
-            status_callback = StatusCallback()
-            
-            # Update config with callback
-            config_dict = {"configurable": {
-                "thread_id": thread_id, 
-                "configuration": config,
-                "callback": status_callback
-            }}
-            
             # Create a task to run the react_graph.ainvoke call
             async def run_react_agent():
-                return await react_graph.ainvoke(input_state, config_dict)
+                return await react_graph.ainvoke(input_state, {"configurable": {
+                    "thread_id": thread_id, 
+                    "configuration": config
+                }})
             
             task = asyncio.create_task(run_react_agent())
             
-            # Send real-time status updates while the task runs
-            yield json.dumps({"type": "status", "status": "Researching..."}) + "\n"
+            # Send improved status updates during research process
+            status_messages = [
+                "Searching for information...",
+                "Analyzing relevant data...",
+                "Gathering reliable sources...",
+                "Processing information...",
+                "Synthesizing findings..."
+            ]
+            
+            status_index = 0
+            last_status_time = time.time()
             
             # Then rely on actual status updates from the agent instead of fake ones
             while not task.done():
                 try:
+                    # Check if it's time to update status (every 2-3 seconds)
+                    current_time = time.time()
+                    if current_time - last_status_time >= 2.5:
+                        # Send the next status update
+                        yield json.dumps({"type": "status", "status": status_messages[status_index]}) + "\n"
+                        # Move to next status message in rotation
+                        status_index = (status_index + 1) % len(status_messages)
+                        last_status_time = current_time
+                    
                     # Wait a short time before checking again
                     await asyncio.wait_for(asyncio.shield(task), 0.5)
                 except asyncio.TimeoutError:
@@ -725,6 +727,9 @@ async def react_agent_search_streaming(request: ReactAgentRequest):
             
             # Get result from completed task
             result = await task
+            
+            # Final status update
+            yield json.dumps({"type": "status", "status": "Finalizing results..."}) + "\n"
             
             # Extract the assistant's response (keep existing code)
             if "messages" in result and result["messages"]:
@@ -807,12 +812,14 @@ async def react_agent_search_streaming(request: ReactAgentRequest):
     )
 
 # Update health check endpoint
-@app.get("/health")
+@app.get("/api/health")
 async def health_check():
+    """Health check endpoint to verify API is running."""
     return {
-        "status": "healthy",
-        "version": "1.0.0",
-        "environment": "production"
+        "status": "ok", 
+        "timestamp": time.time(),
+        "deployment": "Vaani API successfully deployed on Vercel!",
+        "environment": "Vercel" if os.getenv("VERCEL") else "Development"
     }
 
 # Add this helper function to format source URLs with titles
