@@ -355,7 +355,7 @@ async def stream_chat_response(messages, model, thread_id, use_agent, deep_resea
             # Skip initial status update for regular chat
             pass
         else:
-            yield json.dumps({"type": "status", "status": "Processing..."}) + "\n"
+            yield json.dumps({"type": "status", "status": "Researching..."}) + "\n"
 
         # Model client validation
         if model not in MODEL_CLIENTS:
@@ -414,7 +414,7 @@ async def stream_chat_response(messages, model, thread_id, use_agent, deep_resea
         
         else:
             # For agent, we need a different approach since agents don't natively stream
-            yield json.dumps({"type": "status", "status": "Running agent..."}) + "\n"
+            yield json.dumps({"type": "status", "status": "Processing..."}) + "\n"
             
             # Prepare input state for the agent
             input_state = VaaniState(
@@ -439,15 +439,10 @@ async def stream_chat_response(messages, model, thread_id, use_agent, deep_resea
                 
                 agent_task = asyncio.create_task(run_agent())
                 
-                # Show progress updates while agent is running
-                progress_steps = ["Thinking", "Processing", "Analyzing", "Formulating response"]
-                step_index = 0
-                
+                # Wait for the task without sending status updates
                 while not agent_task.done():
-                    yield json.dumps({"type": "status", "status": f"{progress_steps[step_index]}..."}) + "\n"
-                    step_index = (step_index + 1) % len(progress_steps)
                     try:
-                        await asyncio.wait_for(asyncio.shield(agent_task), 1.0)
+                        await asyncio.wait_for(asyncio.shield(agent_task), 2.0)
                     except asyncio.TimeoutError:
                         pass
                 
@@ -695,34 +690,11 @@ async def react_agent_search_streaming(request: ReactAgentRequest):
             
             task = asyncio.create_task(run_react_agent())
             
-            # Send improved status updates during research process
-            status_messages = [
-                "Searching for information...",
-                "Analyzing relevant data...",
-                "Gathering reliable sources...",
-                "Processing information...",
-                "Synthesizing findings..."
-            ]
-            
-            status_index = 0
-            last_status_time = time.time()
-            
-            # Then rely on actual status updates from the agent instead of fake ones
+            # Wait for the task without sending status updates
             while not task.done():
                 try:
-                    # Check if it's time to update status (every 2-3 seconds)
-                    current_time = time.time()
-                    if current_time - last_status_time >= 2.5:
-                        # Send the next status update
-                        yield json.dumps({"type": "status", "status": status_messages[status_index]}) + "\n"
-                        # Move to next status message in rotation
-                        status_index = (status_index + 1) % len(status_messages)
-                        last_status_time = current_time
-                    
-                    # Wait a short time before checking again
-                    await asyncio.wait_for(asyncio.shield(task), 0.5)
+                    await asyncio.wait_for(asyncio.shield(task), 2.0)
                 except asyncio.TimeoutError:
-                    # Task not done yet, continue
                     pass
             
             # Get result from completed task

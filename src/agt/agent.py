@@ -33,6 +33,13 @@ import asyncio
 import replicate
 import datetime
 import requests
+# Import Tavily search tools for improved web search
+try:
+    from langchain_community.tools.tavily_search import TavilySearchResults
+    tavily_available = True
+except ImportError:
+    tavily_available = False
+    logging.warning("TavilySearchResults could not be imported. Web search will use Exa only.")
 
 # Setup logging
 logging.basicConfig(
@@ -50,9 +57,12 @@ qdrant_url = os.getenv('QDRANT_URL')
 qdrant_api_key = os.getenv('QDRANT_API_KEY')
 replicate_api_token = os.getenv('REPLICATE_API_TOKEN')
 musicfy_api_key = os.getenv('MUSICFY_API_KEY')
+tavily_api_key = os.getenv('TAVILY_API_KEY')
 
-# Debug log for MUSICFY_API_KEY
+# Debug log for API keys
 logger.info(f"MUSICFY_API_KEY loaded: {'Yes' if musicfy_api_key else 'No'}")
+logger.info(f"TAVILY_API_KEY loaded: {'Yes' if tavily_api_key else 'No'}")
+
 # Force set the MUSICFY_API_KEY if it's not loaded from .env
 if not musicfy_api_key:
     musicfy_api_key = "cm8009x9i0029lb0cp5dqjczu"
@@ -61,16 +71,18 @@ if not musicfy_api_key:
 required_keys = {
     'OPENAI_API_KEY': openai_key,
     'GROQ_API_KEY': groq_key,
-    'EXA_API_KEY': exa_key,
+    'TAVILY_API_KEY': tavily_api_key,
     'QDRANT_URL': qdrant_url,
     'QDRANT_API_KEY': qdrant_api_key,
     'MUSICFY_API_KEY': musicfy_api_key
 }
 
-# Soft requirement - only log warning if missing, don't halt execution
+# Soft requirements - only log warning if missing
 if not replicate_api_token:
-    logger.warning(
-        "REPLICATE_API_TOKEN is not set. Image generation will not work.")
+    logger.warning("REPLICATE_API_TOKEN is not set. Image generation will not work.")
+    
+if not tavily_api_key:
+    logger.warning("TAVILY_API_KEY is not set. Advanced web search will fall back to Exa only.")
 
 missing_keys = [key for key, value in required_keys.items() if not value]
 if missing_keys:
@@ -92,6 +104,7 @@ class VaaniState(MessagesState):
     collection_name: Optional[str] = None
     reflect_iterations: int = 0
     reflection_data: Optional[Dict[str, Any]] = None
+    max_search_results: int = 5  # Default number of search results for web search
 
 
 # Return types for conditional routing
@@ -225,28 +238,64 @@ class ResponderWithRetries:
         self.max_retries = max_retries
 
     def respond(self, state):
-        response = None
-        messages = state.get("messages", [])
+        original_messages = state.get("messages", [])
+        working_messages = original_messages.copy()
+        
         for attempt in range(self.max_retries):
             try:
-                response = self.runnable.invoke({"messages": messages})
+                # Try to generate a valid response
+                response = self.runnable.invoke({"messages": working_messages})
+                # Validate it
                 self.validator.invoke(response)
                 # If validation successful, return response
                 return response
             except ValidationError as e:
                 logger.warning(
                     f"Validation error on attempt {attempt+1}: {str(e)}")
-                # Add the error message as feedback for next attempt
-                messages.append(response if response else AIMessage(
-                    content="Failed to generate a valid response"))
-                messages.append(
-                    ToolMessage(
-                        content=
-                        f"Error in response format: {str(e)}\n\nPlease follow the schema exactly.",
-                        tool_call_id="validation_error"))
-        # Return last response even if invalid after max retries
-        return response if response else AIMessage(
-            content="Failed to generate a properly formatted response")
+                
+                # Don't modify the working messages on the last attempt
+                if attempt < self.max_retries - 1:
+                    # Start fresh with original messages each time
+                    working_messages = original_messages.copy()
+                    # Add guidance as a system message
+                    working_messages.append(
+                        SystemMessage(
+                            content=
+                            f"The previous response was invalid: {str(e)}. "
+                            f"You **MUST** follow the schema exactly. "
+                            f"**Ensure you include the 'search_queries' field as a list of strings.** "
+                            f"Example: \"search_queries\": [\"query 1\", \"query 2\"]"
+                        ))
+        
+        # If we exhausted all retries, try one more time with a very explicit prompt
+        try:
+            final_messages = original_messages.copy()
+            final_messages.append(
+                SystemMessage(
+                    content=
+                    "The previous attempts failed validation. Provide a valid response adhering STRICTLY to this structure:\n"
+                    "{\n"
+                    "  \"answer\": \"[detailed answer]\",\n"
+                    "  \"reflection\": {\n"
+                    "    \"missing\": \"[critique missing]\",\n"
+                    "    \"superfluous\": \"[critique superfluous]\"\n"
+                    "  },\n"
+                    "  \"search_queries\": [\"query 1\", \"query 2\", \"query 3\"]  <-- **THIS FIELD IS MANDATORY**\n"
+                    "}\n"
+                    "The 'search_queries' field MUST be a list of strings and cannot be empty or omitted."
+                ))
+            response = self.runnable.invoke({"messages": final_messages})
+            # Attempt validation one last time, but return even if invalid
+            try:
+                self.validator.invoke(response)
+            except ValidationError as final_val_error:
+                 logger.error(f"Final validation attempt failed: {final_val_error}")
+            return response # Return the response even if final validation fails
+        except Exception as final_error:
+            logger.error(f"Final attempt failed: {final_error}")
+            # Return a fallback message
+            return AIMessage(
+                content="I couldn't generate a properly formatted response. Let me try to answer directly: I'll need to search for more information on this topic.")
 
 
 # Node implementations
@@ -563,13 +612,16 @@ Current time: {time}
 
 Consider the conversation history to provide context for your answer.
 
+Your task is to:
 1. Provide a detailed ~250 word answer to the user's question.
-2. Reflect and critique your answer. Be severe to maximize improvement.
-3. Recommend search queries to research information and improve your answer."""
+2. Reflect and critique your answer critically.
+3. **Crucially, you MUST recommend 1-3 specific search queries** to find information that addresses the critiques and improves your answer.
+
+Respond using the InitialResearch function, ensuring **ALL fields**, especially `search_queries` (as a list of strings), are included."""
                  ),
                 MessagesPlaceholder(variable_name="messages"),
                 ("user",
-                 "\n\n<s>Reflect on the user's original question and formulate an initial answer. Respond using the InitialResearch function.</s>"
+                 "\n\n<s>Reflect on the user's original question, formulate an initial answer, and provide search queries. Respond using the InitialResearch function. Ensure the 'search_queries' field is populated.</s>"
                  )
             ]).partial(time=lambda: datetime.datetime.now().isoformat())
 
@@ -613,8 +665,9 @@ Consider the conversation history to provide context for your answer.
 
                 # Extract search queries and perform search
                 try:
-                    tool_args = json.loads(
-                        initial_response.tool_calls[0]["args"])
+                    tool_args = initial_response.tool_calls[0]["args"]
+                    if isinstance(tool_args, str):
+                        tool_args = json.loads(tool_args)
                     search_queries = tool_args.get("search_queries", [])
 
                     if not search_queries:
@@ -724,9 +777,7 @@ Consider the conversation history to provide context-appropriate responses.
                         time=lambda: datetime.datetime.now().isoformat(),
                         conversation_context=conversation_context,
                         question=current_query,
-                        initial_response=json.dumps(json.loads(
-                            initial_response.tool_calls[0]["args"]),
-                                                    indent=2),
+                        initial_response=json.dumps(tool_args),
                         search_results=search_context)
 
                     # Set up revision chain
@@ -743,8 +794,9 @@ Consider the conversation history to provide context-appropriate responses.
                     # Extract final answer and store
                     if hasattr(revised_response,
                                'tool_calls') and revised_response.tool_calls:
-                        tool_args = json.loads(
-                            revised_response.tool_calls[0]["args"])
+                        tool_args = revised_response.tool_calls[0]["args"]
+                        if isinstance(tool_args, str):
+                            tool_args = json.loads(tool_args)
                         final_answer = tool_args.get("answer",
                                                      "") + "\n\nReferences:\n"
                         for i, ref in enumerate(tool_args.get(
@@ -795,8 +847,7 @@ Consider the conversation history to provide context-appropriate responses.
                     if hasattr(initial_response,
                                'tool_calls') and initial_response.tool_calls:
                         try:
-                            tool_args = json.loads(
-                                initial_response.tool_calls[0]["args"])
+                            tool_args = initial_response.tool_calls[0]["args"]
                             answer = tool_args.get("answer", "")
                             return {
                                 "messages": [
@@ -859,6 +910,117 @@ Consider the conversation history to provide context-appropriate responses.
         logger.error(f"Error in web_search_agent_node: {e}", exc_info=True)
         error_response = "I encountered an error while searching the web. Please try again with a different query."
         return {"messages": [AIMessage(content=error_response)]}
+
+
+def tavily_web_search_agent_node(state: VaaniState) -> Dict[str, List[BaseMessage]]:
+    """Enhanced web search agent using Tavily Search API with clean status."""
+    try:
+        # Check if Tavily is available
+        if not tavily_available or not tavily_api_key:
+            logger.warning("Tavily search not available")
+            return {
+                "messages": [
+                    AIMessage(content="I'm sorry, but web search functionality is currently unavailable. Please check your TAVILY_API_KEY.")
+                ]
+            }
+            
+        # Get query and context
+        current_query = state["messages"][-1].content
+        conversation_context = build_conversation_context(state)
+        
+        logger.info(f"Performing Tavily search for: {current_query}")
+        
+        # Initialize search client with increased max_results
+        tavily_search = TavilySearchResults(
+            max_results=8,  # Increased from default
+            api_key=tavily_api_key,
+            include_raw_content=True,
+            include_domains=[]
+        )
+        
+        # Perform direct search
+        try:
+            search_results = tavily_search.invoke({"query": current_query})
+            
+            if not search_results or len(search_results) == 0:
+                logger.warning("No search results found")
+                return {
+                    "messages": [
+                        AIMessage(content=f"I searched for information about '{current_query}' but couldn't find relevant results. Let me answer based on my existing knowledge.")
+                    ]
+                }
+                
+            # Format search context for the LLM with increased excerpt length
+            formatted_results = []
+            for i, result in enumerate(search_results):
+                if isinstance(result, dict):
+                    url = result.get("url", "")
+                    title = result.get("title", f"Result {i+1}")
+                    # Increased content length for better context
+                    content = result.get("content", result.get("text", ""))[:1200]
+                    
+                    if url and content:
+                        formatted_results.append(f"[Result {i+1}]\nTitle: {title}\nURL: {url}\nContent: {content}\n")
+            
+            search_context = "\n\n".join(formatted_results)
+            
+            # Prepare the prompt for the LLM
+            prompt = ChatPromptTemplate.from_template("""
+            You are a helpful AI assistant with access to web search results.
+            
+            User query: {question}
+            
+            Previous conversation context:
+            {conversation_context}
+            
+            Here are the search results:
+            {search_results}
+            
+            Based on these search results, please provide a detailed, accurate, and comprehensive answer.
+            
+            Important: 
+            1. Always cite your sources properly using [1], [2], etc.
+            2. Focus on the most relevant information from the search results
+            3. Add a "Sources:" section at the end listing all the URLs used
+            """)
+            
+            # Generate response using the appropriate model
+            llm = get_model(state["model_name"])
+            response = llm.invoke(
+                prompt.format(
+                    question=current_query,
+                    conversation_context=conversation_context,
+                    search_results=search_context
+                )
+            )
+            
+            # Check if the response already includes sources
+            final_content = response.content
+            
+            if "Sources:" not in final_content and "[" not in final_content:
+                # Add sources manually
+                final_content += "\n\nSources:\n"
+                for i, result in enumerate(search_results):
+                    if isinstance(result, dict) and result.get("url"):
+                        final_content += f"[{i+1}] {result.get('title', 'Result')}: {result.get('url')}\n"
+            
+            return {"messages": [AIMessage(content=final_content)]}
+            
+        except Exception as search_error:
+            logger.error(f"Error in Tavily search: {search_error}")
+            return {
+                "messages": [
+                    AIMessage(content="I encountered an error while searching for information. I'll answer based on my existing knowledge instead.")
+                ]
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in tavily_web_search_agent_node: {e}", exc_info=True)
+        return {
+            "messages": [
+                AIMessage(content="I encountered an error while processing your web search. Please try again with a different question.")
+            ]
+        }
 
 
 def image_generator_agent_node(
@@ -1309,7 +1471,7 @@ def create_graph():
         graph.add_node("summarizer", summarizer_node)
         graph.add_node("orchestrator", orchestrator_node)
         graph.add_node("rag_agent", rag_agent_node)
-        graph.add_node("web_search_agent", web_search_agent_node)
+        graph.add_node("web_search_agent", tavily_web_search_agent_node if tavily_available and tavily_api_key else default_agent_node)
         graph.add_node("image_generator", image_generator_agent_node)
         graph.add_node("default_agent", default_agent_node)
         graph.add_node("deep_research", deep_research_agent_node)
@@ -1354,9 +1516,13 @@ def create_graph():
         ]:
             graph.add_edge(agent, END)
         try:
-            memory = SqliteSaver(connection_string="sqlite:///vaani.db")
-            compiled_graph = graph.compile(checkpointer=memory)
-            logger.info("Graph successfully compiled with SQLite checkpointer")
+            if SqliteSaver is not None:
+                memory = SqliteSaver(connection_string="sqlite:///vaani.db")
+                compiled_graph = graph.compile(checkpointer=memory)
+                logger.info("Graph successfully compiled with SQLite checkpointer")
+            else:
+                logger.info("SqliteSaver not available, using in-memory checkpointer")
+                compiled_graph = graph.compile()
             return compiled_graph
         except Exception as memory_error:
             logger.error(

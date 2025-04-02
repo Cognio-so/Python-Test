@@ -152,14 +152,28 @@ def main():
         required_keys = {
             'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
             'GROQ_API_KEY': os.getenv('GROQ_API_KEY'),
-            'EXA_API_KEY': os.getenv('EXA_API_KEY'),
+            'TAVILY_API_KEY': os.getenv('TAVILY_API_KEY'),
             'QDRANT_URL': os.getenv('QDRANT_URL'),
             'QDRANT_API_KEY': os.getenv('QDRANT_API_KEY')
         }
+        
+        # Add optional keys with their descriptions
+        optional_keys = {
+            'REPLICATE_API_TOKEN': {
+                'value': os.getenv('REPLICATE_API_TOKEN'),
+                'description': 'Required for image generation'
+            }
+        }
+        
         missing_keys = [key for key, value in required_keys.items() if not value]
         if missing_keys:
             st.error(f"Missing required API keys: {', '.join(missing_keys)}")
             st.warning("The application may not function correctly without these keys.")
+            
+        missing_optional = [f"{key} ({details['description']})" for key, details in optional_keys.items() if not details['value']]
+        if missing_optional:
+            st.warning(f"Missing optional API keys: {', '.join(missing_optional)}")
+            st.info("Some features may be limited or unavailable.")
         init_session_state()
         with st.sidebar:
             st.title("Vaani.pro Settings")
