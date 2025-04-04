@@ -12,6 +12,9 @@ import logging
 import json
 from pathlib import Path
 import random
+import boto3
+from botocore.exceptions import NoCredentialsError, ClientError
+import mimetypes # To determine content type
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -58,8 +61,8 @@ app.add_middleware(
 )
 
 # Configuration
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# UPLOAD_DIR = "uploads"
+# os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Verify API keys are present
 required_keys = {
@@ -177,30 +180,115 @@ class ReactAgentRequest(BaseModel):
     file_url: Optional[str] = None
     max_search_results: int = 3
 
+# --- Cloudflare R2 Configuration ---
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+CLOUDFLARE_ACCESS_KEY_ID = os.getenv("CLOUDFLARE_ACCESS_KEY_ID")
+CLOUDFLARE_SECRET_ACCESS_KEY = os.getenv("CLOUDFLARE_SECRET_ACCESS_KEY")
+R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
+R2_PUBLIC_URL_BASE = os.getenv("R2_PUBLIC_URL_BASE", "").rstrip('/') # Get optional public base URL
+
+# Check if R2 credentials are set
+R2_CONFIGURED = all([CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_ACCESS_KEY_ID, CLOUDFLARE_SECRET_ACCESS_KEY, R2_BUCKET_NAME])
+
+if not R2_CONFIGURED:
+    logger.warning("Cloudflare R2 credentials not fully configured. File uploads will be disabled.")
+else:
+    logger.info(f"Cloudflare R2 configured for bucket: {R2_BUCKET_NAME}")
+    # Initialize R2 client (using boto3 for S3 compatibility)
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=f'https://{CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com',
+        aws_access_key_id=CLOUDFLARE_ACCESS_KEY_ID,
+        aws_secret_access_key=CLOUDFLARE_SECRET_ACCESS_KEY,
+        region_name='auto', # R2 uses 'auto'
+    )
+
+# --- Modify handle_file_upload to upload to R2 ---
 # Utility functions
-def handle_file_upload(file: UploadFile) -> str:
-    """Process uploaded file and return the local file path."""
+# def handle_file_upload(file: UploadFile) -> str:
+#     """Process uploaded file and return the local file path."""
+#     try:
+#         timestamp = int(time.time())
+#         file_extension = os.path.splitext(file.filename)[1]
+#         unique_filename = f"{timestamp}_{uuid.uuid4().hex}{file_extension}"
+#         file_path = os.path.join(UPLOAD_DIR, unique_filename)
+
+#         with open(file_path, "wb") as f:
+#             f.write(file.file.read())
+
+#         abs_path = os.path.abspath(file_path)
+#         logger.info(f"File uploaded locally: {file.filename} -> {abs_path}")
+#         return abs_path
+#     except Exception as e:
+#         logger.error(f"Error handling local file upload: {e}")
+#         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
+
+async def upload_to_r2(file: UploadFile) -> str:
+    """Uploads a file to Cloudflare R2 and returns its public URL if configured, otherwise a presigned URL."""
+    if not R2_CONFIGURED:
+        raise HTTPException(status_code=501, detail="R2 storage is not configured.")
+
     try:
         timestamp = int(time.time())
         file_extension = os.path.splitext(file.filename)[1]
-        unique_filename = f"{timestamp}_{uuid.uuid4().hex}{file_extension}"
-        file_path = os.path.join(UPLOAD_DIR, unique_filename)
-        
-        with open(file_path, "wb") as f:
-            f.write(file.file.read())
-            
-        abs_path = os.path.abspath(file_path)
-        logger.info(f"File uploaded: {file.filename} -> {abs_path}")
-        return abs_path
+        # Sanitize filename slightly (optional, but good practice)
+        base_filename = os.path.splitext(file.filename)[0].replace(" ", "_").replace("/", "_")
+        unique_filename = f"{timestamp}_{uuid.uuid4().hex}_{base_filename}{file_extension}"
+
+        # Determine content type
+        content_type, _ = mimetypes.guess_type(unique_filename)
+        if content_type is None:
+            content_type = 'application/octet-stream' # Default if guess fails
+
+        # Read file content into memory (consider streaming for large files if needed)
+        file_content = await file.read()
+        await file.close()
+
+        logger.info(f"Uploading {unique_filename} ({content_type}) to R2 bucket {R2_BUCKET_NAME}...")
+
+        s3_client.put_object(
+            Bucket=R2_BUCKET_NAME,
+            Key=unique_filename,
+            Body=file_content,
+            ContentType=content_type
+            # ACL='public-read' # Only if your bucket policy allows public reads explicitly
+        )
+
+        logger.info(f"Successfully uploaded {unique_filename} to R2.")
+
+        # Return public URL if base is configured, otherwise generate presigned URL
+        if R2_PUBLIC_URL_BASE:
+            file_url = f"{R2_PUBLIC_URL_BASE}/{unique_filename}"
+            logger.info(f"Returning public R2 URL: {file_url}")
+            return file_url
+        else:
+            # Generate a presigned URL (valid for 1 hour by default)
+            # Note: Ensure your bucket isn't fully public if using presigned URLs primarily.
+            presigned_url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': R2_BUCKET_NAME, 'Key': unique_filename},
+                ExpiresIn=3600  # URL expires in 1 hour
+            )
+            logger.info(f"Returning presigned R2 URL (expires in 1hr): {presigned_url}")
+            return presigned_url
+
+    except NoCredentialsError:
+        logger.error("R2 credentials not found.")
+        raise HTTPException(status_code=500, detail="R2 storage credentials error.")
+    except ClientError as e:
+        logger.error(f"R2 Client Error: {e}")
+        raise HTTPException(status_code=500, detail=f"R2 storage error: {e.response['Error']['Message']}")
     except Exception as e:
-        logger.error(f"Error handling file upload: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
+        logger.error(f"Error uploading to R2: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to upload file to R2: {str(e)}")
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """Upload a file and return its path."""
-    file_path = handle_file_upload(file)
-    return {"file_path": file_path}
+    """Upload a file to R2 and return its URL."""
+    if not R2_CONFIGURED:
+         raise HTTPException(status_code=501, detail="File upload is disabled (R2 not configured).")
+    file_url = await upload_to_r2(file)
+    return {"file_path": file_url} # Ensure frontend expects 'file_path'
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
