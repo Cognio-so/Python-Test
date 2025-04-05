@@ -1,39 +1,29 @@
 # Core Dependencies
-fastapi>=0.109.0
-uvicorn>=0.27.0
-python-dotenv>=1.0.1
-pydantic>=2.0.0
-requests>=2.31.0
-typing-extensions
-starlette>=0.36.0
+fastapi
+uvicorn
+python-dotenv
+pydantic
 
 # LangChain Ecosystem
-langchain>=0.2.14
-langchain-core>=0.1.27
-langchain-openai>=0.1.22
-langchain-google-genai>=0.3.0
-langchain-anthropic>=0.1.23
-langchain-groq>=0.0.1
-langchain-fireworks>=0.1.7
-langchain-community>=0.2.17
+langchain-core
+langchain-openai
+langchain-google-genai
+langchain-anthropic
+langchain-groq
 langchain-qdrant
-langgraph>=0.2.6
-tavily-python>=0.4.0
 qdrant-client
 
 # LLM APIs
-openai>=1.12.0
-anthropic>=0.18.1
-google-generativeai>=0.3.0
-fireworks-ai>=0.9.0
-groq>=0.4.2
-replicate>=0.22.0
+anthropic
 aiohttp
 async-timeout
 
 # Utilities
-streamlit>=1.24.0
-tenacity>=8.2.0
+streamlit
+boto3
+exa-py
+
+# New dependencies
 
 # For file uploads with FastAPI
 python-multipart>=0.0.6
@@ -46,9 +36,3 @@ aiofiles>=23.1.0
 
 # For better error handling
 backoff>=2.2.1
-
-# Search API
-exa-py
-
-# Security
-python-jose[cryptography]>=3.3.0
